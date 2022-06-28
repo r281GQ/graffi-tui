@@ -36,7 +36,8 @@ impl From<TabMenuItem> for usize {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode().expect("can run in raw mode");
 
     let (tx, rx) = mpsc::channel();
