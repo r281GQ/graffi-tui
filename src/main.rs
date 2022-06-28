@@ -11,13 +11,29 @@ use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    text::{Span, Spans},
+    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
     Terminal,
 };
 
 enum Event<I> {
     Input(I),
     Tick,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum TabMenuItem {
+    Execution,
+    Collection,
+}
+
+impl From<TabMenuItem> for usize {
+    fn from(input: TabMenuItem) -> usize {
+        match input {
+            TabMenuItem::Execution => 1,
+            TabMenuItem::Collection => 0,
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,10 +75,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     terminal.clear()?;
 
+    let mut active_menu_item = TabMenuItem::Execution;
+
     loop {
         terminal.draw(|rect| {
-            let header = Block::default().title("Header").borders(Borders::ALL);
             let main = Block::default().title("Main").borders(Borders::ALL);
+
+            let menu_titles = vec!["collections", "execute"];
+
+            let main_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints(
+                    [
+                        Constraint::Percentage(10),
+                        Constraint::Percentage(80),
+                        Constraint::Percentage(10),
+                    ]
+                    .as_ref(),
+                )
+                .split(rect.size());
+
+            let menu = menu_titles
+                .iter()
+                .map(|t| {
+                    let (first, rest) = t.split_at(1);
+                    Spans::from(vec![
+                        Span::styled(
+                            first,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::UNDERLINED),
+                        ),
+                        Span::styled(rest, Style::default().fg(Color::White)),
+                    ])
+                })
+                .collect();
+
+            let tabs = Tabs::new(menu)
+                .select(active_menu_item.into())
+                .block(Block::default().title("Menu").borders(Borders::ALL))
+                .style(Style::default().fg(Color::White))
+                .highlight_style(Style::default().fg(Color::Yellow))
+                .divider(Span::raw("|"));
+
+            rect.render_widget(tabs, main_layout[0]);
 
             let footer = Paragraph::new("Footer message")
                 .style(Style::default().fg(Color::LightCyan))
@@ -78,26 +135,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main_left = Block::default().title("MainLeft").borders(Borders::ALL);
             let main_right = Block::default().title("MainRight").borders(Borders::ALL);
 
-            let main_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints(
-                    [
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(80),
-                        Constraint::Percentage(10),
-                    ]
-                    .as_ref(),
-                )
-                .split(rect.size());
-
             let pains_inside_main = Layout::default()
                 .direction(Direction::Horizontal)
                 .margin(1)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(main_layout[1]);
 
-            rect.render_widget(header, main_layout[0]);
             rect.render_widget(main, main_layout[1]);
             rect.render_widget(footer, main_layout[2]);
 
@@ -106,18 +149,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
         match rx.recv()? {
-            Event::Input(event) => {
-                println!("Key pressed...");
-                match event.code {
-                    KeyCode::Char('q') => {
-                        println!("Exiting program...");
-                        disable_raw_mode()?;
-                        terminal.show_cursor()?;
-                        break;
-                    }
-                    _ => {}
+            Event::Input(event) => match event.code {
+                KeyCode::Char('q') => {
+                    println!("Exiting program...");
+                    disable_raw_mode()?;
+                    terminal.show_cursor()?;
+                    break;
                 }
-            }
+                KeyCode::Char('c') => {
+                    active_menu_item = TabMenuItem::Collection;
+                }
+                KeyCode::Char('e') => active_menu_item = TabMenuItem::Execution,
+
+                _ => {}
+            },
             _ => {}
         }
     }
