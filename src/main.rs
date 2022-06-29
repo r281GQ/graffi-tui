@@ -16,6 +16,8 @@ use tui::{
     Terminal,
 };
 
+mod graphql;
+
 enum Event<I> {
     Input(I),
     Tick,
@@ -39,6 +41,7 @@ impl From<TabMenuItem> for usize {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode().expect("can run in raw mode");
+    graphql::perform_graphql().await?;
 
     let (tx, rx) = mpsc::channel();
 
