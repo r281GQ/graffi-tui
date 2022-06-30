@@ -103,8 +103,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut resp: Option<graphql::GraphQLResponse<graphql::CharacterDataField>> = None;
 
     loop {
-        let payload_to_display = match resp.clone() {
-            Some(payload) => serde_json::to_string(&payload)?,
+        let payload_to_display = match &resp {
+            Some(payload) => serde_json::to_string(payload)?,
             None => " nothing.".to_string(),
         };
 

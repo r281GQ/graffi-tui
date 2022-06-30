@@ -5,19 +5,19 @@ use std::error::Error;
 const API_URL: &str = "https://rickandmortyapi.com/graphql";
 const QUERY: &str = "{\"operationName\":null,\"variables\":{},\"query\":\"{  character(id: 1) { id name status }}\"}";
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Character {
     id: String,
     name: String,
     status: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CharacterDataField {
     character: Character,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GraphQLResponse<T> {
     data: T,
 }
