@@ -11,12 +11,14 @@ use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::*,
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, BorderType, Borders, Paragraph, Tabs},
     Terminal,
 };
 
 mod graphql;
+
+const QUERY: &str = "query character { id, name, status }";
 
 enum Event<I> {
     Input(I),
@@ -104,9 +106,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let payload_to_display = match &resp {
-            Some(payload) => serde_json::to_string(payload)?,
+            Some(payload) => serde_json::to_string_pretty(payload)?,
             None => " nothing.".to_string(),
         };
+
+        let document = graphql_parser::query::parse_query::<&str>(QUERY)?;
+
+        let formattedQuery = format!("{}", document);
 
         terminal.draw(|rect| {
             let main = Block::default().title("Main").borders(Borders::ALL);
@@ -167,12 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(get_color(active_menu_item, ActiveWindow::Left)));
 
-            let content = Paragraph::new(vec![Spans::from(vec![
-                Span::raw("The results of the network request is: "),
-                Span::styled(payload_to_display, Style::default().fg(Color::Green)),
-            ])])
-            .style(Style::default().fg(Color::LightCyan))
-            .block(main_left);
+            let query_content = Paragraph::new(Text::raw(formattedQuery)).block(main_left);
 
             let main_right = Block::default()
                 .title("MainRight")
@@ -180,6 +181,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .border_style(
                     Style::default().fg(get_color(active_menu_item, ActiveWindow::Right)),
                 );
+
+            let result_content = Paragraph::new(Text::raw(payload_to_display))
+                .style(Style::default().fg(Color::LightCyan))
+                .block(main_right);
 
             let pains_inside_main = Layout::default()
                 .direction(Direction::Horizontal)
@@ -190,8 +195,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rect.render_widget(main, main_layout[1]);
             rect.render_widget(footer, main_layout[2]);
 
-            rect.render_widget(content, pains_inside_main[0]);
-            rect.render_widget(main_right, pains_inside_main[1]);
+            rect.render_widget(query_content, pains_inside_main[0]);
+            rect.render_widget(result_content, pains_inside_main[1]);
         })?;
 
         match rx.recv()? {
