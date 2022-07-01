@@ -26,19 +26,19 @@ enum Event<I> {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum ActiveWindow {
+enum ActiveMainPane {
     Left,
     Right,
 }
 
 #[derive(Copy, Clone, Debug)]
 enum TabMenuItem {
-    Execution(ActiveWindow),
+    Execution(ActiveMainPane),
     Collection,
 }
 
-impl From<ActiveWindow> for usize {
-    fn from(_input: ActiveWindow) -> usize {
+impl From<ActiveMainPane> for usize {
+    fn from(_input: ActiveMainPane) -> usize {
         0
     }
 }
@@ -52,13 +52,37 @@ impl From<TabMenuItem> for usize {
     }
 }
 
-fn get_color(menu_item: TabMenuItem, pane: ActiveWindow) -> tui::style::Color {
+fn get_color(menu_item: TabMenuItem, pane: ActiveMainPane) -> tui::style::Color {
     match (menu_item, pane) {
-        (TabMenuItem::Execution(ActiveWindow::Left), ActiveWindow::Right) => Color::Magenta,
-        (TabMenuItem::Execution(ActiveWindow::Right), ActiveWindow::Left) => Color::Magenta,
+        (TabMenuItem::Execution(ActiveMainPane::Left), ActiveMainPane::Right) => Color::Magenta,
+        (TabMenuItem::Execution(ActiveMainPane::Right), ActiveMainPane::Left) => Color::Magenta,
         _ => Color::White,
     }
 }
+
+#[derive(PartialEq, Eq)]
+enum ActiveWindow {
+    Menu,
+    URL,
+    Main,
+    Footer,
+}
+
+struct AppState {
+    url_input: String,
+    active_window: ActiveWindow,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            url_input: "https://rickandmortyapi.com/graphql".to_string(),
+            active_window: ActiveWindow::URL,
+        }
+    }
+}
+
+fn handle_key_press() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,6 +91,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel();
 
     let tick_rate = Duration::from_millis(200);
+
+    let mut app_state = AppState::default();
 
     // "Move" moves the ownership to the thread.
     // This is listening for inputs in  a separate thread, not blocking the main rendering thread.
@@ -100,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     terminal.clear()?;
 
-    let mut active_menu_item = TabMenuItem::Execution(ActiveWindow::Left);
+    let mut active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left);
 
     let mut resp: Option<graphql::GraphQLResponse<graphql::CharacterDataField>> = None;
 
@@ -112,10 +138,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let document = graphql_parser::query::parse_query::<&str>(QUERY)?;
 
-        let formattedQuery = format!("{}", document);
+        let formatted_query = format!("{}", document);
 
         terminal.draw(|rect| {
             let main = Block::default().title("Main").borders(Borders::ALL);
+            let endpoint_url = Block::default()
+                .title("URL")
+                .border_style(if app_state.active_window == ActiveWindow::URL {
+                    Style::fg(Style::default(), Color::Red)
+                } else {
+                    Style::default()
+                })
+                .borders(Borders::ALL);
 
             let menu_titles = vec!["collections", "execute"];
 
@@ -125,7 +159,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints(
                     [
                         Constraint::Percentage(10),
-                        Constraint::Percentage(80),
+                        Constraint::Percentage(10),
+                        Constraint::Percentage(70),
                         Constraint::Percentage(10),
                     ]
                     .as_ref(),
@@ -171,15 +206,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main_left = Block::default()
                 .title("MainLeft")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(get_color(active_menu_item, ActiveWindow::Left)));
+                .border_style(
+                    Style::default().fg(get_color(active_menu_item, ActiveMainPane::Left)),
+                );
 
-            let query_content = Paragraph::new(Text::raw(formattedQuery)).block(main_left);
+            let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
+            //let query_content = Paragraph::new(app_state.url_input.as_ref()).block(main_left);
+            let url_text = Paragraph::new(app_state.url_input.as_ref()).block(endpoint_url);
 
             let main_right = Block::default()
                 .title("MainRight")
                 .borders(Borders::ALL)
                 .border_style(
-                    Style::default().fg(get_color(active_menu_item, ActiveWindow::Right)),
+                    Style::default().fg(get_color(active_menu_item, ActiveMainPane::Right)),
                 );
 
             let result_content = Paragraph::new(Text::raw(payload_to_display))
@@ -190,10 +229,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .direction(Direction::Horizontal)
                 .margin(1)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-                .split(main_layout[1]);
+                .split(main_layout[2]);
 
-            rect.render_widget(main, main_layout[1]);
-            rect.render_widget(footer, main_layout[2]);
+            rect.render_widget(url_text, main_layout[1]);
+            rect.render_widget(main, main_layout[2]);
+            rect.render_widget(footer, main_layout[3]);
 
             rect.render_widget(query_content, pains_inside_main[0]);
             rect.render_widget(result_content, pains_inside_main[1]);
@@ -209,10 +249,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 KeyCode::Char('c') => {
                     active_menu_item = TabMenuItem::Collection;
                 }
-                KeyCode::Char('e') => active_menu_item = TabMenuItem::Execution(ActiveWindow::Left),
+                KeyCode::Char('e') => {
+                    active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
+                }
                 KeyCode::Char(' ') => {
                     resp = Some(graphql::perform_graphql().await?);
                     ()
+                }
+                KeyCode::Char(character) => app_state.url_input.push(character),
+                KeyCode::Backspace => {
+                    app_state.url_input.pop();
                 }
                 _ => {}
             },
