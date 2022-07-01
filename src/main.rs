@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let document = graphql_parser::query::parse_query::<&str>(QUERY)?;
 
-        let formattedQuery = format!("{}", document);
+        let formatted_query = format!("{}", document);
 
         terminal.draw(|rect| {
             let main = Block::default().title("Main").borders(Borders::ALL);
@@ -173,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(get_color(active_menu_item, ActiveWindow::Left)));
 
-            let query_content = Paragraph::new(Text::raw(formattedQuery)).block(main_left);
+            let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
 
             let main_right = Block::default()
                 .title("MainRight")
