@@ -11,12 +11,14 @@ use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::*,
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, BorderType, Borders, Paragraph, Tabs},
     Terminal,
 };
 
 mod graphql;
+
+const QUERY: &str = "query character { id, name, status }";
 
 enum Event<I> {
     Input(I),
@@ -24,24 +26,43 @@ enum Event<I> {
 }
 
 #[derive(Copy, Clone, Debug)]
+enum ActiveWindow {
+    Left,
+    Right,
+}
+
+#[derive(Copy, Clone, Debug)]
 enum TabMenuItem {
-    Execution,
+    Execution(ActiveWindow),
     Collection,
+}
+
+impl From<ActiveWindow> for usize {
+    fn from(_input: ActiveWindow) -> usize {
+        0
+    }
 }
 
 impl From<TabMenuItem> for usize {
     fn from(input: TabMenuItem) -> usize {
         match input {
-            TabMenuItem::Execution => 1,
+            TabMenuItem::Execution(_) => 1,
             TabMenuItem::Collection => 0,
         }
+    }
+}
+
+fn get_color(menu_item: TabMenuItem, pane: ActiveWindow) -> tui::style::Color {
+    match (menu_item, pane) {
+        (TabMenuItem::Execution(ActiveWindow::Left), ActiveWindow::Right) => Color::Magenta,
+        (TabMenuItem::Execution(ActiveWindow::Right), ActiveWindow::Left) => Color::Magenta,
+        _ => Color::White,
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode().expect("can run in raw mode");
-    graphql::perform_graphql().await?;
 
     let (tx, rx) = mpsc::channel();
 
@@ -79,9 +100,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     terminal.clear()?;
 
-    let mut active_menu_item = TabMenuItem::Execution;
+    let mut active_menu_item = TabMenuItem::Execution(ActiveWindow::Left);
+
+    let mut resp: Option<graphql::GraphQLResponse<graphql::CharacterDataField>> = None;
 
     loop {
+        let payload_to_display = match &resp {
+            Some(payload) => serde_json::to_string_pretty(payload)?,
+            None => " nothing.".to_string(),
+        };
+
+        let document = graphql_parser::query::parse_query::<&str>(QUERY)?;
+
+        let formattedQuery = format!("{}", document);
+
         terminal.draw(|rect| {
             let main = Block::default().title("Main").borders(Borders::ALL);
 
@@ -136,8 +168,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .border_type(BorderType::Plain),
                 );
 
-            let main_left = Block::default().title("MainLeft").borders(Borders::ALL);
-            let main_right = Block::default().title("MainRight").borders(Borders::ALL);
+            let main_left = Block::default()
+                .title("MainLeft")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(get_color(active_menu_item, ActiveWindow::Left)));
+
+            let query_content = Paragraph::new(Text::raw(formattedQuery)).block(main_left);
+
+            let main_right = Block::default()
+                .title("MainRight")
+                .borders(Borders::ALL)
+                .border_style(
+                    Style::default().fg(get_color(active_menu_item, ActiveWindow::Right)),
+                );
+
+            let result_content = Paragraph::new(Text::raw(payload_to_display))
+                .style(Style::default().fg(Color::LightCyan))
+                .block(main_right);
 
             let pains_inside_main = Layout::default()
                 .direction(Direction::Horizontal)
@@ -148,14 +195,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rect.render_widget(main, main_layout[1]);
             rect.render_widget(footer, main_layout[2]);
 
-            rect.render_widget(main_left, pains_inside_main[0]);
-            rect.render_widget(main_right, pains_inside_main[1]);
+            rect.render_widget(query_content, pains_inside_main[0]);
+            rect.render_widget(result_content, pains_inside_main[1]);
         })?;
 
         match rx.recv()? {
             Event::Input(event) => match event.code {
                 KeyCode::Char('q') => {
-                    println!("Exiting program...");
                     disable_raw_mode()?;
                     terminal.show_cursor()?;
                     break;
@@ -163,8 +209,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 KeyCode::Char('c') => {
                     active_menu_item = TabMenuItem::Collection;
                 }
-                KeyCode::Char('e') => active_menu_item = TabMenuItem::Execution,
-
+                KeyCode::Char('e') => active_menu_item = TabMenuItem::Execution(ActiveWindow::Left),
+                KeyCode::Char(' ') => {
+                    resp = Some(graphql::perform_graphql().await?);
+                    ()
+                }
                 _ => {}
             },
             _ => {}
