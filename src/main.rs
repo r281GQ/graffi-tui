@@ -17,6 +17,7 @@ use tui::{
 };
 
 mod graphql;
+mod redux;
 
 const QUERY: &str = "query character { id, name, status }";
 
@@ -60,7 +61,7 @@ fn get_color(menu_item: TabMenuItem, pane: ActiveMainPane) -> tui::style::Color 
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
 enum ActiveWindow {
     Menu,
     URL,
@@ -68,9 +69,22 @@ enum ActiveWindow {
     Footer,
 }
 
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
+enum Mode {
+    Normal,
+    Insert,
+}
+
+enum Action {
+    Noop,
+    ChangeURI(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct AppState {
     url_input: String,
     active_window: ActiveWindow,
+    mode: Mode,
 }
 
 impl Default for AppState {
@@ -78,21 +92,32 @@ impl Default for AppState {
         AppState {
             url_input: "https://rickandmortyapi.com/graphql".to_string(),
             active_window: ActiveWindow::URL,
+            mode: Mode::Normal,
         }
     }
 }
 
-fn handle_key_press() {}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = redux::Store::new(
+        AppState::default(),
+        Box::new(|state: AppState, action: Action| match action {
+            Action::Noop => state,
+            Action::ChangeURI(uri) => {
+                let mut cloned_state = state.clone();
+
+                cloned_state.url_input = uri;
+
+                cloned_state
+            }
+        }),
+    );
+
     enable_raw_mode().expect("can run in raw mode");
 
     let (tx, rx) = mpsc::channel();
 
     let tick_rate = Duration::from_millis(200);
-
-    let mut app_state = AppState::default();
 
     // "Move" moves the ownership to the thread.
     // This is listening for inputs in  a separate thread, not blocking the main rendering thread.
@@ -144,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = Block::default().title("Main").borders(Borders::ALL);
             let endpoint_url = Block::default()
                 .title("URL")
-                .border_style(if app_state.active_window == ActiveWindow::URL {
+                .border_style(if store.get_state().active_window == ActiveWindow::URL {
                     Style::fg(Style::default(), Color::Red)
                 } else {
                     Style::default()
@@ -212,7 +237,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
             //let query_content = Paragraph::new(app_state.url_input.as_ref()).block(main_left);
-            let url_text = Paragraph::new(app_state.url_input.as_ref()).block(endpoint_url);
+            // let url_text = Paragraph::new(app_state.url_input.as_ref()).block(endpoint_url);
+            let url_text = Paragraph::new(store.get_state().url_input.as_ref()).block(endpoint_url);
 
             let main_right = Block::default()
                 .title("MainRight")
@@ -244,6 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 KeyCode::Char('q') => {
                     disable_raw_mode()?;
                     terminal.show_cursor()?;
+
                     break;
                 }
                 KeyCode::Char('c') => {
@@ -256,9 +283,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     resp = Some(graphql::perform_graphql().await?);
                     ()
                 }
-                KeyCode::Char(character) => app_state.url_input.push(character),
+                KeyCode::Char(character) => {
+                    let g = store.get_state();
+                    let mut s = g.url_input.clone();
+                    s.push(character);
+                    store.dispatch(Action::ChangeURI(s))
+                }
                 KeyCode::Backspace => {
-                    app_state.url_input.pop();
+                    let g = store.get_state();
+                    let mut s = g.url_input.clone();
+                    s.pop();
+                    store.dispatch(Action::ChangeURI(s))
                 }
                 _ => {}
             },
