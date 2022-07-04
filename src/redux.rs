@@ -17,7 +17,7 @@ impl<T: Clone + Default + PartialEq, A> Store<T, A> {
         self.state = reducer_function(self.state.clone(), action);
     }
 
-    pub fn get_state(&mut self) -> &T {
-        &self.state
+    pub fn get_state(&self) -> T {
+        self.state.clone()
     }
 }
