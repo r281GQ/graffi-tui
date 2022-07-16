@@ -17,6 +17,7 @@ use tui::{
 };
 
 mod graphql;
+mod redux;
 
 const QUERY: &str = "query character { id, name, status }";
 
@@ -60,7 +61,7 @@ fn get_color(menu_item: TabMenuItem, pane: ActiveMainPane) -> tui::style::Color 
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
 enum ActiveWindow {
     Menu,
     URL,
@@ -68,9 +69,26 @@ enum ActiveWindow {
     Footer,
 }
 
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
+enum Mode {
+    Normal,
+    Insert,
+}
+
+#[derive(Clone)]
+enum Action {
+    Noop,
+    ChangeURI(String),
+    ChangeMode(Mode),
+    SetFirstRender,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct AppState {
     url_input: String,
     active_window: ActiveWindow,
+    mode: Mode,
+    is_first_render: bool,
 }
 
 impl Default for AppState {
@@ -78,21 +96,51 @@ impl Default for AppState {
         AppState {
             url_input: "https://rickandmortyapi.com/graphql".to_string(),
             active_window: ActiveWindow::URL,
+            mode: Mode::Insert,
+            is_first_render: true,
         }
     }
 }
 
-fn handle_key_press() {}
+fn get_position_x(input: String) -> u16 {
+    input.chars().count().try_into().unwrap_or(0) + 2
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = io::stdout();
+
+    let crossterm_backend = CrosstermBackend::new(stdout);
+
+    let mut terminal = Terminal::new(crossterm_backend)?;
+
+    let mut store = redux::Store::new(
+        AppState::default(),
+        Box::new(|mut state: AppState, action: Action| match action {
+            Action::Noop => state,
+            Action::ChangeURI(uri) => {
+                state.url_input = uri;
+
+                state
+            }
+            Action::ChangeMode(mode) => {
+                state.mode = mode;
+
+                state
+            }
+            Action::SetFirstRender => {
+                state.is_first_render = false;
+
+                state
+            }
+        }),
+    );
+
     enable_raw_mode().expect("can run in raw mode");
 
     let (tx, rx) = mpsc::channel();
 
     let tick_rate = Duration::from_millis(200);
-
-    let mut app_state = AppState::default();
 
     // "Move" moves the ownership to the thread.
     // This is listening for inputs in  a separate thread, not blocking the main rendering thread.
@@ -118,12 +166,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let stdout = io::stdout();
-
-    let crossterm_backend = CrosstermBackend::new(stdout);
-
-    let mut terminal = Terminal::new(crossterm_backend)?;
-
     terminal.clear()?;
 
     let mut active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left);
@@ -144,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = Block::default().title("Main").borders(Borders::ALL);
             let endpoint_url = Block::default()
                 .title("URL")
-                .border_style(if app_state.active_window == ActiveWindow::URL {
+                .border_style(if store.get_state().active_window == ActiveWindow::URL {
                     Style::fg(Style::default(), Color::Red)
                 } else {
                     Style::default()
@@ -211,8 +253,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
             let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
-            //let query_content = Paragraph::new(app_state.url_input.as_ref()).block(main_left);
-            let url_text = Paragraph::new(app_state.url_input.as_ref()).block(endpoint_url);
+
+            let url_text = Paragraph::new(store.get_state().url_input).block(endpoint_url);
 
             let main_right = Block::default()
                 .title("MainRight")
@@ -239,30 +281,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rect.render_widget(result_content, pains_inside_main[1]);
         })?;
 
-        match rx.recv()? {
-            Event::Input(event) => match event.code {
-                KeyCode::Char('q') => {
-                    disable_raw_mode()?;
-                    terminal.show_cursor()?;
-                    break;
-                }
-                KeyCode::Char('c') => {
-                    active_menu_item = TabMenuItem::Collection;
-                }
-                KeyCode::Char('e') => {
-                    active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
-                }
-                KeyCode::Char(' ') => {
-                    resp = Some(graphql::perform_graphql().await?);
-                    ()
-                }
-                KeyCode::Char(character) => app_state.url_input.push(character),
-                KeyCode::Backspace => {
-                    app_state.url_input.pop();
-                }
+        if store.get_state().mode == Mode::Insert {
+            let position_x = get_position_x(store.get_state().url_input);
+
+            terminal.set_cursor(position_x, 6)?;
+            terminal.show_cursor()?;
+        } else {
+            terminal.hide_cursor()?;
+        }
+
+        if store.get_state().is_first_render {
+            let position_x = get_position_x(store.get_state().url_input);
+
+            terminal.set_cursor(position_x, 6)?;
+
+            store.dispatch(Action::SetFirstRender);
+        }
+
+        match store.get_state().mode {
+            Mode::Normal => match rx.recv()? {
+                Event::Input(event) => match event.code {
+                    KeyCode::Char('q') => {
+                        disable_raw_mode()?;
+
+                        break;
+                    }
+                    KeyCode::Char('c') => {
+                        active_menu_item = TabMenuItem::Collection;
+                    }
+                    KeyCode::Char('i') => {
+                        store.dispatch(Action::ChangeMode(Mode::Insert));
+                    }
+                    KeyCode::Char('e') => {
+                        active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
+                    }
+                    KeyCode::Char(' ') => {
+                        resp = Some(graphql::perform_graphql().await?);
+                        ()
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
-            _ => {}
+            Mode::Insert => match rx.recv()? {
+                Event::Input(event) => match event.code {
+                    KeyCode::Esc => {
+                        terminal.hide_cursor()?;
+                        store.dispatch(Action::ChangeMode(Mode::Normal));
+                    }
+                    KeyCode::Char(character) => {
+                        let mut url = store.get_state().url_input;
+
+                        url.push(character);
+
+                        store.dispatch(Action::ChangeURI(url))
+                    }
+                    KeyCode::Backspace => {
+                        let mut url = store.get_state().url_input;
+
+                        url.pop();
+
+                        store.dispatch(Action::ChangeURI(url));
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
         }
     }
 
