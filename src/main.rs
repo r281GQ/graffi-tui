@@ -75,9 +75,12 @@ enum Mode {
     Insert,
 }
 
+#[derive(Clone)]
 enum Action {
     Noop,
     ChangeURI(String),
+    ChangeMode(Mode),
+    SetFirstRender,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +88,7 @@ struct AppState {
     url_input: String,
     active_window: ActiveWindow,
     mode: Mode,
+    is_first_render: bool,
 }
 
 impl Default for AppState {
@@ -92,23 +96,42 @@ impl Default for AppState {
         AppState {
             url_input: "https://rickandmortyapi.com/graphql".to_string(),
             active_window: ActiveWindow::URL,
-            mode: Mode::Normal,
+            mode: Mode::Insert,
+            is_first_render: true,
         }
     }
 }
 
+fn get_position_x(input: String) -> u16 {
+    input.chars().count().try_into().unwrap_or(0) + 2
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = io::stdout();
+
+    let crossterm_backend = CrosstermBackend::new(stdout);
+
+    let mut terminal = Terminal::new(crossterm_backend)?;
+
     let mut store = redux::Store::new(
         AppState::default(),
-        Box::new(|state: AppState, action: Action| match action {
+        Box::new(|mut state: AppState, action: Action| match action {
             Action::Noop => state,
             Action::ChangeURI(uri) => {
-                let mut cloned_state = state.clone();
+                state.url_input = uri;
 
-                cloned_state.url_input = uri;
+                state
+            }
+            Action::ChangeMode(mode) => {
+                state.mode = mode;
 
-                cloned_state
+                state
+            }
+            Action::SetFirstRender => {
+                state.is_first_render = false;
+
+                state
             }
         }),
     );
@@ -142,12 +165,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-
-    let stdout = io::stdout();
-
-    let crossterm_backend = CrosstermBackend::new(stdout);
-
-    let mut terminal = Terminal::new(crossterm_backend)?;
 
     terminal.clear()?;
 
@@ -236,9 +253,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
             let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
-            //let query_content = Paragraph::new(app_state.url_input.as_ref()).block(main_left);
-            // let url_text = Paragraph::new(app_state.url_input.as_ref()).block(endpoint_url);
-            let url_text = Paragraph::new(store.get_state().url_input.as_ref()).block(endpoint_url);
+
+            let url_text = Paragraph::new(store.get_state().url_input).block(endpoint_url);
 
             let main_right = Block::default()
                 .title("MainRight")
@@ -265,39 +281,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rect.render_widget(result_content, pains_inside_main[1]);
         })?;
 
-        match rx.recv()? {
-            Event::Input(event) => match event.code {
-                KeyCode::Char('q') => {
-                    disable_raw_mode()?;
-                    terminal.show_cursor()?;
+        if store.get_state().mode == Mode::Insert {
+            let position_x = get_position_x(store.get_state().url_input);
 
-                    break;
-                }
-                KeyCode::Char('c') => {
-                    active_menu_item = TabMenuItem::Collection;
-                }
-                KeyCode::Char('e') => {
-                    active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
-                }
-                KeyCode::Char(' ') => {
-                    resp = Some(graphql::perform_graphql().await?);
-                    ()
-                }
-                KeyCode::Char(character) => {
-                    let g = store.get_state();
-                    let mut s = g.url_input.clone();
-                    s.push(character);
-                    store.dispatch(Action::ChangeURI(s))
-                }
-                KeyCode::Backspace => {
-                    let g = store.get_state();
-                    let mut s = g.url_input.clone();
-                    s.pop();
-                    store.dispatch(Action::ChangeURI(s))
-                }
+            terminal.set_cursor(position_x, 6)?;
+            terminal.show_cursor()?;
+        } else {
+            terminal.hide_cursor()?;
+        }
+
+        if store.get_state().is_first_render {
+            let position_x = get_position_x(store.get_state().url_input);
+
+            terminal.set_cursor(position_x, 6)?;
+
+            store.dispatch(Action::SetFirstRender);
+        }
+
+        match store.get_state().mode {
+            Mode::Normal => match rx.recv()? {
+                Event::Input(event) => match event.code {
+                    KeyCode::Char('q') => {
+                        disable_raw_mode()?;
+
+                        break;
+                    }
+                    KeyCode::Char('c') => {
+                        active_menu_item = TabMenuItem::Collection;
+                    }
+                    KeyCode::Char('i') => {
+                        store.dispatch(Action::ChangeMode(Mode::Insert));
+                    }
+                    KeyCode::Char('e') => {
+                        active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
+                    }
+                    KeyCode::Char(' ') => {
+                        resp = Some(graphql::perform_graphql().await?);
+                        ()
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
-            _ => {}
+            Mode::Insert => match rx.recv()? {
+                Event::Input(event) => match event.code {
+                    KeyCode::Esc => {
+                        terminal.hide_cursor()?;
+                        store.dispatch(Action::ChangeMode(Mode::Normal));
+                    }
+                    KeyCode::Char(character) => {
+                        let mut url = store.get_state().url_input;
+
+                        url.push(character);
+
+                        store.dispatch(Action::ChangeURI(url))
+                    }
+                    KeyCode::Backspace => {
+                        let mut url = store.get_state().url_input;
+
+                        url.pop();
+
+                        store.dispatch(Action::ChangeURI(url));
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
         }
     }
 

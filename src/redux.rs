@@ -1,9 +1,9 @@
-pub struct Store<T: Clone + Default + PartialEq, A> {
+pub struct Store<T: Clone + Default + PartialEq, A: Clone> {
     state: T,
     reducer: Box<dyn Fn(T, A) -> T>,
 }
 
-impl<T: Clone + Default + PartialEq, A> Store<T, A> {
+impl<T: Clone + Default + PartialEq, A: Clone> Store<T, A> {
     pub fn new(initial_state: T, reducer: Box<dyn Fn(T, A) -> T>) -> Store<T, A> {
         Store {
             state: initial_state,
