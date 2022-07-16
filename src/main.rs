@@ -76,11 +76,20 @@ enum Mode {
 }
 
 #[derive(Clone)]
+enum WindowDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Clone)]
 enum Action {
     Noop,
     ChangeURI(String),
     ChangeMode(Mode),
     SetFirstRender,
+    ChangeWindow(WindowDirection),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -130,6 +139,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Action::SetFirstRender => {
                 state.is_first_render = false;
+
+                state
+            }
+            Action::ChangeWindow(direction) => {
+                match (state.active_window, direction) {
+                    (ActiveWindow::URL, WindowDirection::Down) => {
+                        state.active_window = ActiveWindow::Main;
+                    }
+                    (ActiveWindow::Main, WindowDirection::Down) => {
+                        state.active_window = ActiveWindow::Footer;
+                    }
+                    (ActiveWindow::Menu, WindowDirection::Down) => {
+                        state.active_window = ActiveWindow::URL;
+                    }
+                    (ActiveWindow::URL, WindowDirection::Up) => {
+                        state.active_window = ActiveWindow::Menu;
+                    }
+                    (ActiveWindow::Main, WindowDirection::Up) => {
+                        state.active_window = ActiveWindow::URL;
+                    }
+                    (ActiveWindow::Footer, WindowDirection::Up) => {
+                        state.active_window = ActiveWindow::Main;
+                    }
+                    (_, _) => {} // ActiveWindow::Main => {}
+                                 // ActiveWindow::Footer => {}
+                                 // ActiveWindow::Menu => {}
+                };
 
                 state
             }
@@ -183,7 +219,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let formatted_query = format!("{}", document);
 
         terminal.draw(|rect| {
-            let main = Block::default().title("Main").borders(Borders::ALL);
+            let main = Block::default()
+                .border_style(if store.get_state().active_window == ActiveWindow::Main {
+                    Style::fg(Style::default(), Color::Red)
+                } else {
+                    Style::default()
+                })
+                .title("Main")
+                .borders(Borders::ALL);
             let endpoint_url = Block::default()
                 .title("URL")
                 .border_style(if store.get_state().active_window == ActiveWindow::URL {
@@ -227,7 +270,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let tabs = Tabs::new(menu)
                 .select(active_menu_item.into())
-                .block(Block::default().title("Menu").borders(Borders::ALL))
+                .block(
+                    Block::default()
+                        .border_style(if store.get_state().active_window == ActiveWindow::Menu {
+                            Style::fg(Style::default(), Color::Red)
+                        } else {
+                            Style::default()
+                        })
+                        .title("Menu")
+                        .borders(Borders::ALL),
+                )
                 .style(Style::default().fg(Color::White))
                 .highlight_style(Style::default().fg(Color::Yellow))
                 .divider(Span::raw("|"));
@@ -239,6 +291,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .alignment(Alignment::Center)
                 .block(
                     Block::default()
+                        .border_style(if store.get_state().active_window == ActiveWindow::Footer {
+                            Style::fg(Style::default(), Color::Red)
+                        } else {
+                            Style::default()
+                        })
                         .borders(Borders::ALL)
                         .style(Style::default().fg(Color::White))
                         .title("Copyright")
@@ -314,6 +371,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Char('e') => {
                         active_menu_item = TabMenuItem::Execution(ActiveMainPane::Left)
+                    }
+                    KeyCode::Char('k') => store.dispatch(Action::ChangeWindow(WindowDirection::Up)),
+                    KeyCode::Char('j') => {
+                        store.dispatch(Action::ChangeWindow(WindowDirection::Down))
                     }
                     KeyCode::Char(' ') => {
                         resp = Some(graphql::perform_graphql().await?);
