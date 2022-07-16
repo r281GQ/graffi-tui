@@ -26,7 +26,7 @@ enum Event<I> {
     Tick,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum ActiveMainPane {
     Left,
     Right,
@@ -101,6 +101,7 @@ struct AppState {
     mode: Mode,
     is_first_render: bool,
     is_help_modal_open: bool,
+    active_pane: ActiveMainPane,
 }
 
 impl Default for AppState {
@@ -111,6 +112,7 @@ impl Default for AppState {
             mode: Mode::Insert,
             is_first_render: true,
             is_help_modal_open: false,
+            active_pane: ActiveMainPane::Left,
         }
     }
 }
@@ -176,9 +178,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (ActiveWindow::Footer, WindowDirection::Up) => {
                         state.active_window = ActiveWindow::Main;
                     }
-                    (_, _) => {} // ActiveWindow::Main => {}
-                                 // ActiveWindow::Footer => {}
-                                 // ActiveWindow::Menu => {}
+                    (ActiveWindow::Main, WindowDirection::Left) => {
+                        state.active_pane = ActiveMainPane::Left
+                    }
+                    (ActiveWindow::Main, WindowDirection::Right) => {
+                        state.active_pane = ActiveMainPane::Right
+                    }
+                    (_, _) => {}
                 };
 
                 state
@@ -233,126 +239,145 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let formatted_query = format!("{}", document);
 
         terminal.draw(|rect| {
-            let main = Block::default()
-                .border_style(if store.get_state().active_window == ActiveWindow::Main {
-                    Style::fg(Style::default(), Color::Red)
-                } else {
-                    Style::default()
-                })
-                .title("Main")
-                .borders(Borders::ALL);
-            let endpoint_url = Block::default()
-                .title("URL")
-                .border_style(if store.get_state().active_window == ActiveWindow::URL {
-                    Style::fg(Style::default(), Color::Red)
-                } else {
-                    Style::default()
-                })
-                .borders(Borders::ALL);
+            if store.get_state().is_help_modal_open {
+                let main_layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([Constraint::Percentage(70)].as_ref())
+                    .split(rect.size());
+                let endpoint_url = Block::default().title("Help").borders(Borders::ALL);
+                let url_text = Paragraph::new(store.get_state().url_input).block(endpoint_url);
+                rect.render_widget(url_text, main_layout[0]);
+            } else {
+                let main = Block::default()
+                    .border_style(if store.get_state().active_window == ActiveWindow::Main {
+                        Style::fg(Style::default(), Color::Red)
+                    } else {
+                        Style::default()
+                    })
+                    .title("Main")
+                    .borders(Borders::ALL);
+                let endpoint_url = Block::default()
+                    .title("URL")
+                    .border_style(if store.get_state().active_window == ActiveWindow::URL {
+                        Style::fg(Style::default(), Color::Red)
+                    } else {
+                        Style::default()
+                    })
+                    .borders(Borders::ALL);
 
-            let menu_titles = vec!["collections", "execute"];
+                let menu_titles = vec!["collections", "execute"];
 
-            let main_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints(
-                    [
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(70),
-                        Constraint::Percentage(10),
-                    ]
-                    .as_ref(),
-                )
-                .split(rect.size());
+                let main_layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints(
+                        [
+                            Constraint::Percentage(10),
+                            Constraint::Percentage(10),
+                            Constraint::Percentage(70),
+                            Constraint::Percentage(10),
+                        ]
+                        .as_ref(),
+                    )
+                    .split(rect.size());
 
-            let menu = menu_titles
-                .iter()
-                .map(|t| {
-                    let (first, rest) = t.split_at(1);
-                    Spans::from(vec![
-                        Span::styled(
-                            first,
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::UNDERLINED),
-                        ),
-                        Span::styled(rest, Style::default().fg(Color::White)),
-                    ])
-                })
-                .collect();
+                let menu = menu_titles
+                    .iter()
+                    .map(|t| {
+                        let (first, rest) = t.split_at(1);
+                        Spans::from(vec![
+                            Span::styled(
+                                first,
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::UNDERLINED),
+                            ),
+                            Span::styled(rest, Style::default().fg(Color::White)),
+                        ])
+                    })
+                    .collect();
 
-            let tabs = Tabs::new(menu)
-                .select(active_menu_item.into())
-                .block(
-                    Block::default()
-                        .border_style(if store.get_state().active_window == ActiveWindow::Menu {
-                            Style::fg(Style::default(), Color::Red)
-                        } else {
-                            Style::default()
-                        })
-                        .title("Menu")
-                        .borders(Borders::ALL),
-                )
-                .style(Style::default().fg(Color::White))
-                .highlight_style(Style::default().fg(Color::Yellow))
-                .divider(Span::raw("|"));
+                let tabs = Tabs::new(menu)
+                    .select(active_menu_item.into())
+                    .block(
+                        Block::default()
+                            .border_style(
+                                if store.get_state().active_window == ActiveWindow::Menu {
+                                    Style::fg(Style::default(), Color::Red)
+                                } else {
+                                    Style::default()
+                                },
+                            )
+                            .title("Menu")
+                            .borders(Borders::ALL),
+                    )
+                    .style(Style::default().fg(Color::White))
+                    .highlight_style(Style::default().fg(Color::Yellow))
+                    .divider(Span::raw("|"));
 
-            rect.render_widget(tabs, main_layout[0]);
+                rect.render_widget(tabs, main_layout[0]);
 
-            let footer = Paragraph::new("Footer message")
-                .style(Style::default().fg(Color::LightCyan))
-                .alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .border_style(if store.get_state().active_window == ActiveWindow::Footer {
-                            Style::fg(Style::default(), Color::Red)
-                        } else {
-                            Style::default()
-                        })
-                        .borders(Borders::ALL)
-                        .style(Style::default().fg(Color::White))
-                        .title("Copyright")
-                        .border_type(BorderType::Plain),
-                );
+                let footer = Paragraph::new("Footer message")
+                    .style(Style::default().fg(Color::LightCyan))
+                    .alignment(Alignment::Center)
+                    .block(
+                        Block::default()
+                            .border_style(
+                                if store.get_state().active_window == ActiveWindow::Footer {
+                                    Style::fg(Style::default(), Color::Red)
+                                } else {
+                                    Style::default()
+                                },
+                            )
+                            .borders(Borders::ALL)
+                            .style(Style::default().fg(Color::White))
+                            .title("Copyright")
+                            .border_type(BorderType::Plain),
+                    );
 
-            let main_left = Block::default()
-                .title("MainLeft")
-                .borders(Borders::ALL)
-                .border_style(
-                    Style::default().fg(get_color(active_menu_item, ActiveMainPane::Left)),
-                );
+                let main_left = Block::default()
+                    .title("MainLeft")
+                    .borders(Borders::ALL)
+                    .border_style(if store.get_state().active_pane == ActiveMainPane::Left {
+                        Style::fg(Style::default(), Color::Red)
+                    } else {
+                        Style::default()
+                    });
 
-            let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
+                let query_content = Paragraph::new(Text::raw(formatted_query)).block(main_left);
 
-            let url_text = Paragraph::new(store.get_state().url_input).block(endpoint_url);
+                let url_text = Paragraph::new(store.get_state().url_input).block(endpoint_url);
 
-            let main_right = Block::default()
-                .title("MainRight")
-                .borders(Borders::ALL)
-                .border_style(
-                    Style::default().fg(get_color(active_menu_item, ActiveMainPane::Right)),
-                );
+                let main_right = Block::default()
+                    .title("MainRight")
+                    .borders(Borders::ALL)
+                    .border_style(if store.get_state().active_pane == ActiveMainPane::Right {
+                        Style::fg(Style::default(), Color::Red)
+                    } else {
+                        Style::default()
+                    });
 
-            let result_content = Paragraph::new(Text::raw(payload_to_display))
-                .style(Style::default().fg(Color::LightCyan))
-                .block(main_right);
+                let result_content = Paragraph::new(Text::raw(payload_to_display))
+                    .style(Style::default().fg(Color::LightCyan))
+                    .block(main_right);
 
-            let pains_inside_main = Layout::default()
-                .direction(Direction::Horizontal)
-                .margin(1)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-                .split(main_layout[2]);
+                let pains_inside_main = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .margin(1)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                    .split(main_layout[2]);
 
-            rect.render_widget(url_text, main_layout[1]);
-            rect.render_widget(main, main_layout[2]);
-            rect.render_widget(footer, main_layout[3]);
+                rect.render_widget(url_text, main_layout[1]);
+                rect.render_widget(main, main_layout[2]);
+                rect.render_widget(footer, main_layout[3]);
 
-            rect.render_widget(query_content, pains_inside_main[0]);
-            rect.render_widget(result_content, pains_inside_main[1]);
+                rect.render_widget(query_content, pains_inside_main[0]);
+                rect.render_widget(result_content, pains_inside_main[1]);
+            }
         })?;
 
-        if store.get_state().mode == Mode::Insert {
+        if store.get_state().mode == Mode::Insert && !store.get_state().is_help_modal_open {
             let position_x = get_position_x(store.get_state().url_input);
 
             terminal.set_cursor(position_x, 6)?;
@@ -373,9 +398,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Mode::Normal => match rx.recv()? {
                 Event::Input(event) => match event.code {
                     KeyCode::Char('q') => {
-                        disable_raw_mode()?;
+                        if store.get_state().is_help_modal_open {
+                            store.dispatch(Action::CloseHelpModal)
+                        } else if true {
+                            disable_raw_mode()?;
 
-                        break;
+                            break;
+                        }
+                    }
+                    KeyCode::Esc => {
+                        if store.get_state().is_help_modal_open {
+                            store.dispatch(Action::CloseHelpModal)
+                        }
                     }
                     KeyCode::Char('c') => {
                         active_menu_item = TabMenuItem::Collection;
@@ -390,6 +424,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Char('j') => {
                         store.dispatch(Action::ChangeWindow(WindowDirection::Down))
                     }
+                    KeyCode::Char('h') => {
+                        store.dispatch(Action::ChangeWindow(WindowDirection::Left))
+                    }
+                    KeyCode::Char('l') => {
+                        store.dispatch(Action::ChangeWindow(WindowDirection::Right))
+                    }
+                    KeyCode::Char('?') => store.dispatch(Action::OpenHelpModal),
                     KeyCode::Char(' ') => {
                         resp = Some(graphql::perform_graphql().await?);
                         ()
