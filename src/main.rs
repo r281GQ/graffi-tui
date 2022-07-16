@@ -90,6 +90,8 @@ enum Action {
     ChangeMode(Mode),
     SetFirstRender,
     ChangeWindow(WindowDirection),
+    OpenHelpModal,
+    CloseHelpModal,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,6 +100,7 @@ struct AppState {
     active_window: ActiveWindow,
     mode: Mode,
     is_first_render: bool,
+    is_help_modal_open: bool,
 }
 
 impl Default for AppState {
@@ -107,6 +110,7 @@ impl Default for AppState {
             active_window: ActiveWindow::URL,
             mode: Mode::Insert,
             is_first_render: true,
+            is_help_modal_open: false,
         }
     }
 }
@@ -127,6 +131,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         AppState::default(),
         Box::new(|mut state: AppState, action: Action| match action {
             Action::Noop => state,
+            Action::OpenHelpModal => {
+                state.is_help_modal_open = true;
+
+                state
+            }
+            Action::CloseHelpModal => {
+                state.is_help_modal_open = false;
+
+                state
+            }
             Action::ChangeURI(uri) => {
                 state.url_input = uri;
 
